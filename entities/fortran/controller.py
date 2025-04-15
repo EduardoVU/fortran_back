@@ -8,7 +8,7 @@ def create_formulario(formulario_data: Formulario):
 
     if not os.path.exists(carpeta):
         return {
-            "status": "error",
+            "success": False,
             "message": f"La carpeta '{carpeta}' no fue encontrada."
         }
 
@@ -92,11 +92,11 @@ REAL(KIND=16)::mindes1,mindes2
 
     if not archivos_encontrados:
         return {
-            "status": "error",
+            "success": False,
             "message": f"No se encontraron archivos con los nombres especificados en la carpeta '{carpeta}'."
         }
 
     return {
-        "status": "success",
+        "success": True,
         "message": f"Archivo generado en la carpeta '{carpeta}'.",
     }

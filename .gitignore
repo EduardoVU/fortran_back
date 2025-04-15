@@ -38,6 +38,5 @@ coverage.*
 .pytest_cache/
 
 # PyInstaller
-dist/
 build/
 *.spec
