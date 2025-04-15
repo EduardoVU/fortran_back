@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+.venv.bak/
+
+# VSCode settings (opcional si compartes el proyecto)
+.vscode/
+
+# macOS
+.DS_Store
+
+# Environments and credentials
+.env
+*.env
+
+# Log files
+*.log
+
+# Migrations (si usas Alembic o similar)
+migrations/
+
+# Database files (si usas SQLite u otra db local)
+*.sqlite3
+*.db
+
+# Testing
+htmlcov/
+coverage.*
+.cache
+.pytest_cache/
+
+# PyInstaller
+dist/
+build/
+*.spec
