@@ -33,19 +33,22 @@ REAL(KIND=16)::mindes1,mindes2
 ''')
 
         # Recopilar todas las variables kX_Y por grupo
+        print("archivos")
+        print(archivos)
         for nombre in archivos:
             archivos_con_prefijo = [f for f in os.listdir(carpeta) if f.startswith(nombre)]
             cantidad = len(archivos_con_prefijo)
-
             if cantidad == 0:
                 # Si no hay archivos, retornar un error inmediato
                 return {
                     "status": "error",
                     "message": f"No se encontraron archivos con el prefijo '{nombre}' en la carpeta '{carpeta}'."
                 }
-
+                
             archivos_encontrados = True
-            match = re.search(r'(\d+)$', nombre)
+            match = re.search(r'(\d+)(?=KG$)', nombre)
+            print("match")
+            print(match)
             if match:
                 numero = match.group(1)
                 variables = [f"k{numero}_{i+1}" for i in range(cantidad)]
