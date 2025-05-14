@@ -1,105 +1,95 @@
 import os
+import tempfile
+import base64
 import re
-from .schemas import Formulario
+from fastapi import UploadFile
+from typing import List
+from collections import defaultdict
 
-def create_formulario(formulario_data: Formulario):
-    carpeta = formulario_data.carpeta
-    archivos = formulario_data.archivos
+def create_formulario(files: List[UploadFile]):
+    # Almacenar los nombres de los archivos
+    filenames = []
+    
+    # Crear una carpeta temporal
+    temp_dir = tempfile.mkdtemp()
+    print(f"Carpeta temporal creada: {temp_dir}")
 
-    if not os.path.exists(carpeta):
-        return {
-            "success": False,
-            "message": f"La carpeta '{carpeta}' no fue encontrada."
-        }
+    # Guardar los archivos en la carpeta temporal con sus nombres originales
+    for file in files:
+        filename = file.filename  # Usar el nombre real del archivo
+        file_path = os.path.join(temp_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+        filenames.append(filename)
+    
+    # Agrupar los archivos por el número antes del guion bajo usando regex
+    file_groups = defaultdict(list)
+    pattern = re.compile(r'(\d+)(?:KG)?_')  # Captura el número antes de _ y ignora "KG" si está presente
 
-    archivo_path = os.path.join(carpeta, "main.f90")
-    archivos_encontrados = False
-
-    # Lista para almacenar los kX_Y y promedios
-    lista_todos_los_ks = []
-
-    with open(archivo_path, "w", encoding="utf-8") as f:
-        # Header
-        f.write('''PROGRAM main
-USE singular
-IMPLICIT NONE
-
-CHARACTER(len=100)::raw_data,cut_rawdata
-CHARACTER(len=100)::acc_corregida,vel_nocorregida
-CHARACTER(len=100)::vel_corregida,des_nocorregida
-CHARACTER(len=100)::des_corregida
-REAL(KIND=16)::mindes1,mindes2
-
-''')
-
-        # Recopilar todas las variables kX_Y por grupo
-        print("archivos")
-        print(archivos)
-        for nombre in archivos:
-            archivos_con_prefijo = [f for f in os.listdir(carpeta) if f.startswith(nombre)]
-            cantidad = len(archivos_con_prefijo)
-            if cantidad == 0:
-                # Si no hay archivos, retornar un error inmediato
-                return {
-                    "status": "error",
-                    "message": f"No se encontraron archivos con el prefijo '{nombre}' en la carpeta '{carpeta}'."
-                }
+    for filename in filenames:
+        match = pattern.search(filename)
+        if match:
+            group_number = match.group(1)
+            file_groups[group_number].append(filename)
+    
+    # Crear el archivo main.f90 con el contenido especificado
+    main_f90_path = os.path.join(temp_dir, "main.f90")
+    with open(main_f90_path, "w", encoding="utf-8") as f:
+        f.write("PROGRAM main\n")
+        f.write("USE singular\n")
+        f.write("IMPLICIT NONE\n\n")
+        f.write("CHARACTER(len=100)::raw_data,cut_rawdata\n")
+        f.write("CHARACTER(len=100)::acc_corregida,vel_nocorregida\n")
+        f.write("CHARACTER(len=100)::vel_corregida,des_nocorregida\n")
+        f.write("CHARACTER(len=100)::des_corregida\n")
+        f.write("REAL(KIND=16)::mindes1,mindes2\n\n")
+        
+        # Generar las líneas de las variables en base a los grupos
+        for group, files in file_groups.items():
+            f.write(f"REAL(KIND=16)::" + ",".join([f"k{group}_{i+1}" for i in range(len(files))]) + "\n")
+        
+        # Generar los promedios en base a la cantidad de grupos
+        num_groups = len(file_groups)
+        f.write("REAL(KIND=16)::" + ",".join([f"promedio{i}" for i in range(1, num_groups + 1)]) + "\n\n")
+        
+        # Generar el bloque de procesamiento para cada archivo
+        for group, files in file_groups.items():
+            for i, filename in enumerate(files):
+                f.write(f'raw_data = "{filename}"\n')
+                f.write(f'cut_rawdata = "{filename.split(".")[0]}_cut.txt"\n')
+                f.write(f'acc_corregida = "{filename.split(".")[0]}_acccor.txt"\n')
+                f.write(f'vel_nocorregida = "{filename.split(".")[0]}_velsin.txt"\n')
+                f.write(f'vel_corregida = "{filename.split(".")[0]}_velcor.txt"\n')
+                f.write(f'des_nocorregida = "{filename.split(".")[0]}_dessin.txt"\n')
+                f.write(f'des_corregida = "{filename.split(".")[0]}_descor.txt"\n\n')
                 
-            archivos_encontrados = True
-            match = re.search(r'(\d+)(?=KG$)', nombre)
-            print("match")
-            print(match)
-            if match:
-                numero = match.group(1)
-                variables = [f"k{numero}_{i+1}" for i in range(cantidad)]
-                lista_todos_los_ks.append((numero, variables))
+                f.write("CALL process(raw_data, cut_rawdata, acc_corregida, vel_nocorregida, ")
+                f.write("vel_corregida, des_nocorregida, des_corregida, mindes2)\n")
+                f.write('WRITE(*,*)"mindes2 es: ",mindes2\n')
+                f.write(f'k{group}_{i+1} = mindes2\n\n')
+            
+            # Generar la línea de promedio para este grupo
+            f.write(f"!Ahora obtenemos el promedio de todos los desplazamientos del grupo {group}\n")
+            promedio_vars = "+".join([f"k{group}_{i+1}" for i in range(len(files))])
+            f.write(f"promedio{list(file_groups.keys()).index(group) + 1} = ({promedio_vars})/{len(files)}\n\n")
+        
+        # Generar las líneas de WRITE para mostrar los promedios
+        f.write("\n! Mostrar los desplazamientos promedio\n")
+        for i, group in enumerate(file_groups.keys(), 1):
+            f.write(f'WRITE(*,*)"El desplazamiento promedio para archivos con {group} es : ",promedio{i}\n')
+        
+        f.write("\nEND PROGRAM main\n")
 
-        # Escribir las variables kX_Y
-        for _, variables in lista_todos_los_ks:
-            f.write(f"REAL(KIND=16)::" + ",".join(variables) + "\n")
+    print(f"Archivo main.f90 creado en: {main_f90_path}")
 
-        # Línea única para las variables promedio
-        cantidad_promedios = len(lista_todos_los_ks)
-        if cantidad_promedios > 0:
-            promedio_vars = [f"promedio{i+1}" for i in range(cantidad_promedios)]
-            f.write(f"REAL(KIND=16)::" + ",".join(promedio_vars) + "\n\n")
-
-        # Bloques de procesamiento + promedio después del último archivo
-        for i, (numero, variables) in enumerate(lista_todos_los_ks):
-            cantidad = len(variables)
-            nombre_base = archivos[i]
-
-            for j in range(1, cantidad + 1):
-                base = f"{nombre_base}_{j}"
-                f.write(f'raw_data = "{base}.txt"\n')
-                f.write(f'cut_rawdata = "{base}_cut.txt"\n')
-                f.write(f'acc_corregida = "{base}_acccor.txt"\n')
-                f.write(f'vel_nocorregida = "{base}_velsin.txt"\n')
-                f.write(f'vel_corregida = "{base}_velcor.txt"\n')
-                f.write(f'des_nocorregida = "{base}_dessin.txt"\n')
-                f.write(f'des_corregida = "{base}_descor.txt"\n\n')
-
-                f.write("CALL process(raw_data, cut_rawdata,acc_corregida,vel_nocorregida,vel_corregida,des_nocorregida,des_corregida,mindes2)\n")
-                f.write('WRITE(*,*)"mindes2 es: ",mindes2\n\n')
-                f.write(f'k{numero}_{j} = mindes2\n\n')
-
-                if j == cantidad:
-                    promedio_var = f"promedio{i + 1}"
-                    promedio_expr = "+".join(variables)
-                    f.write("!Ahora obtenemos el promedio de todos los desplazamientos\n")
-                    f.write(f"{promedio_var} = ({promedio_expr})/{cantidad}\n\n")
-
-        # Generar los WRITE para los promedios
-        for i in range(cantidad_promedios):
-            f.write(f'WRITE(*,*)"El desplazamiento promedio para archivos con {lista_todos_los_ks[i][0]} es : ",promedio{i+1}\n')
-
-    if not archivos_encontrados:
-        return {
-            "success": False,
-            "message": f"No se encontraron archivos con los nombres especificados en la carpeta '{carpeta}'."
-        }
-
+    # Convertir el archivo main.f90 a Base64
+    with open(main_f90_path, "rb") as f:
+        file_content = f.read()
+        base64_content = base64.b64encode(file_content).decode("utf-8")
+    
+    # Retornar el archivo Base64
     return {
-        "success": True,
-        "message": f"Archivo generado en la carpeta '{carpeta}'.",
+        'success': True,
+        'message': "Archivo creado con éxito",
+        'data': base64_content
     }
