@@ -40,3 +40,4 @@ coverage.*
 # PyInstaller
 build/
 *.spec
+/entities/fortran/__pycache__
