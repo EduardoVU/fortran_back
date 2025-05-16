@@ -90,8 +90,8 @@ def generate_fortran_file(temp_dir: str, file_groups: Dict[str, List[str]]) -> s
         for group, files in file_groups.items():
             for i, filename in enumerate(files):
                 base_name = os.path.splitext(filename)[0]
-                print("filename")
-                print(filename)
+                # print("filename")
+                # print(filename)
                 f.write(f'raw_data = "{filename}"\n')
                 f.write(f'cut_rawdata = "{base_name}_cut.txt"\n')
                 f.write(f'acc_corregida = "{base_name}_acccor.txt"\n')
