@@ -6,6 +6,7 @@ from fastapi import UploadFile
 from typing import List
 from fpdf import FPDF
 import base64
+import re
 
 def create_plots(files: List[UploadFile]):
     try:
@@ -74,11 +75,16 @@ def generate_pdf(temp_dir: str, grouped_files: dict) -> str:
     base_name = extract_base_name(grouped_files)
 
     if grouped_files["acccor"]:
-        create_plot_section(pdf, grouped_files["acccor"], f"ACELERACIONES {base_name}", "Tiempo (s)", "Aceleración (g)", temp_dir, "#0000FF", 1)
+        add_section_page(pdf, f"ACELERACIONES {base_name}")
+        create_plot_section(pdf, grouped_files["acccor"], "Aceleración", "Tiempo (s)", "Aceleración (g)", temp_dir, "#0000FF", 1)
+    
     if grouped_files["velcor"]:
-        create_plot_section(pdf, grouped_files["velcor"], f"VELOCIDADES {base_name}", "Tiempo (s)", "Velocidad (m/s)", temp_dir, "#008000", 2)
+        add_section_page(pdf, f"VELOCIDADES {base_name}")
+        create_plot_section(pdf, grouped_files["velcor"], "Velocidad", "Tiempo (s)", "Velocidad (m/s)", temp_dir, "#008000", 2)
+    
     if grouped_files["descor"]:
-        create_plot_section(pdf, grouped_files["descor"], f"DESPLAZAMIENTOS {base_name}", "Tiempo (s)", "Desplazamiento (m)", temp_dir, "#FF0000", 4)
+        add_section_page(pdf, f"DESPLAZAMIENTOS {base_name}")
+        create_plot_section(pdf, grouped_files["descor"], "Desplazamiento", "Tiempo (s)", "Desplazamiento (m)", temp_dir, "#FF0000", 4)
 
     pdf_path = os.path.join(temp_dir, "plots.pdf")
     pdf.output(pdf_path)
@@ -87,23 +93,43 @@ def generate_pdf(temp_dir: str, grouped_files: dict) -> str:
 def extract_base_name(grouped_files: dict) -> str:
     for category in grouped_files:
         if grouped_files[category]:
-            return os.path.basename(grouped_files[category][0]).split("_")[0]
+            filename = os.path.basename(grouped_files[category][0]).split(".")[0]
+            # Buscar el texto antes del último número y su _
+            base_name = re.sub(r'_\d+(_[^_]+)?$', '', filename)
+            return base_name
     return "Sin_Nombre"
 
-def create_plot_section(pdf: FPDF, files: List[str], section_title: str, xlabel: str, ylabel: str, temp_dir: str, color: str, column_index: int):
-    if not files:
-        return
-
+def add_section_page(pdf: FPDF, section_title: str):
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, section_title, ln=True, align="C")
+    pdf.set_font("Arial", "B", 24)
+    pdf.set_y(pdf.h / 2 - 10)  # Centrado verticalmente
+    pdf.set_x(0)
+    pdf.multi_cell(0, 10, section_title, align="C")
 
+def create_plot_section(pdf: FPDF, files: List[str], section_type: str, xlabel: str, ylabel: str, temp_dir: str, color: str, column_index: int):
     for file in files:
         try:
             data = pd.read_csv(file, delim_whitespace=True, header=None)
+            
+            # Extraer los dos últimos números del nombre del archivo
+            filename = os.path.basename(file)
+            numbers = re.findall(r'\d+', filename)
+            
+            if len(numbers) >= 2:
+                first_number = numbers[-2]
+                second_number = numbers[-1]
+
+                # Convertir 75 a 7.5 si es el primer número
+                if first_number == "75":
+                    first_number = "7.5"
+
+                title_text = f"Impacto {first_number} KG {second_number}"
+            else:
+                title_text = "Impacto Desconocido"
+            
             plt.figure()
             plt.plot(data[0], data[column_index], color=color)
-            plt.title(f"{section_title} - {os.path.basename(file)}")
+            plt.title(f"{title_text}")
             plt.xlabel(xlabel)
             plt.ylabel(ylabel)
 
@@ -111,11 +137,20 @@ def create_plot_section(pdf: FPDF, files: List[str], section_title: str, xlabel:
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
 
-            # Ajustar tamaño de la imagen en el PDF (150mm de ancho)
             pdf.add_page()
-            pdf.image(plot_path, x=30, y=20, w=150)
+            pdf.set_font("Arial", "B", 16)
+            pdf.set_y(20)
+
+            # Centrar la imagen
+            image_width = 150
+            image_height = 100
+            x_pos = (pdf.w - image_width) / 2
+            y_pos = (pdf.h - image_height) / 2 + 20
+
+            pdf.image(plot_path, x=x_pos, y=y_pos, w=image_width, h=image_height)
 
         except Exception as e:
             pdf.add_page()
             pdf.set_font("Arial", "B", 12)
-            pdf.multi_cell(0, 10, f"Error al procesar el archivo {os.path.basename(file)}: {str(e)}")
+            pdf.set_y((pdf.h - 10) / 2)
+            pdf.multi_cell(0, 10, f"Error al procesar el archivo {os.path.basename(file)}: {str(e)}", align="C")
