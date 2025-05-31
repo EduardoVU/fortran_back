@@ -5,8 +5,11 @@ import pandas as pd
 from fastapi import UploadFile
 from typing import List
 from fpdf import FPDF
+from matplotlib.ticker import MaxNLocator
+from matplotlib.lines import Line2D
 import base64
 import re
+from .models import DamagePayload
 
 def create_plots(files: List[UploadFile]):
     try:
@@ -128,7 +131,7 @@ def create_plot_section(pdf: FPDF, files: List[str], section_type: str, xlabel: 
                 title_text = "Impacto Desconocido"
             
             plt.figure()
-            plt.plot(data[0], data[column_index], color=color)
+            plt.plot(data.value[0], data.value[column_index], color=color)
             plt.title(f"{title_text}")
             plt.xlabel(xlabel)
             plt.ylabel(ylabel)
@@ -154,3 +157,171 @@ def create_plot_section(pdf: FPDF, files: List[str], section_type: str, xlabel: 
             pdf.set_font("Arial", "B", 12)
             pdf.set_y((pdf.h - 10) / 2)
             pdf.multi_cell(0, 10, f"Error al procesar el archivo {os.path.basename(file)}: {str(e)}", align="C")
+
+def create_damage_plot(data: DamagePayload):
+    desplazamientos = []
+    energias = []
+
+    gravity = 9.81
+    for entry in data.value:
+        entry.energy = entry.masa * gravity * entry.height
+        entry.desplazamiento = abs(entry.desplazamiento)
+
+        desplazamientos.append(entry.desplazamiento)
+        energias.append(entry.energy)
+
+    n = len(desplazamientos)
+
+    fig, ax = plt.subplots(figsize=(8, 11))  # más alto para la tabla abajo
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=10))
+
+    for i, (x, y) in enumerate(zip(desplazamientos, energias)):
+        if i == 0:
+            ax.plot(x, y, marker='o', color='dimgray', markersize=7)
+        elif i == 1:
+            ax.plot(x, y, marker='^', color='red', markersize=7)
+        elif i == n - 1:
+            ax.plot(x, y, marker='s', color='blue', markersize=7)
+        else:
+            ax.plot(x, y, marker='o', color='blue', markersize=7)
+
+    if n >= 2:
+        ax.plot(desplazamientos[0:2], energias[0:2], linestyle='-', color='red')
+    if n >= 3:
+        for i in range(1, n - 1):
+            ax.plot(desplazamientos[i:i+2], energias[i:i+2], linestyle='-', color='blue')
+
+    ax.set_title(data.name)
+    ax.set_xlabel('Desplazamiento (m)')
+    ax.set_ylabel('Energía (J)')
+    ax.grid(True)
+
+    for i, (x, y) in enumerate(zip(desplazamientos, energias)):
+        text = f"({x:.4g}, {y:.2f})"
+        if i == n - 1:
+            ax.annotate(
+                text, xy=(x, y), xytext=(-10, 0),
+                textcoords="offset points", ha="right", va="center",
+                fontsize=12, color="black"
+            )
+        else:
+            ax.annotate(
+                text, xy=(x, y), xytext=(15, 0),
+                textcoords="offset points", ha="left", va="center",
+                fontsize=12, color="black"
+            )
+
+    x_range = max(desplazamientos) - min(desplazamientos)
+    y_range = max(energias) - min(energias)
+    x_margin = x_range * 0.25 if x_range > 0 else 1e-7
+    y_margin = y_range * 0.25 if y_range > 0 else 1
+
+    ax.set_xlim(min(desplazamientos) - x_margin, max(desplazamientos) + x_margin)
+    ax.set_ylim(min(energias) - y_margin, max(energias) + y_margin)
+
+    yticks = ax.get_yticks()
+    ax.set_yticklabels([f"{y_tick:.2f}" for y_tick in yticks])
+    
+    if n >= 2:
+        punto1 = (desplazamientos[0], energias[0])
+        puntoN = (desplazamientos[-1], energias[-1])
+        hipotetico1 = (puntoN[0], punto1[1])  
+        hipotetico2 = (punto1[0], puntoN[1])
+
+        print(f"Punto hipotético 1: {hipotetico1}")
+        print(f"Punto hipotético 2: {hipotetico2}")
+        
+        # Recolectar los puntos para el polígono: H1, Pn, ..., P1, H1
+        puntos_poligono = [hipotetico1] + list(zip(reversed(desplazamientos), reversed(energias))) + [hipotetico1]
+        area_inferior = 0
+        for i in range(len(puntos_poligono) - 1):
+            x0, y0 = puntos_poligono[i]
+            x1, y1 = puntos_poligono[i + 1]
+            area_inferior += (x0 * y1) - (x1 * y0)
+        area_inferior = abs(area_inferior) / 2
+        
+        puntos_poligono = [hipotetico2] + list(zip(desplazamientos, energias)) + [hipotetico2]
+        area_superior = 0
+        for i in range(len(puntos_poligono) - 1):
+            x0, y0 = puntos_poligono[i]
+            x1, y1 = puntos_poligono[i + 1]
+            area_superior += (x0 * y1) - (x1 * y0)
+        area_superior = abs(area_superior) / 2
+    else:
+        area_inferior = 0
+        area_superior = 0
+        
+    print(f"Área inferior (Ainf): {area_inferior:.4f}")
+    print(f"Área superior (Asup): {area_superior:.4f}")
+    
+
+    # Tabla con desplazamientos en notación científica
+    table_data = []
+    for i in range(n):
+        x_val = desplazamientos[i]
+        y_val = energias[i]
+        table_data.append([f"Punto {i+1}", f"({x_val:.3e}, {y_val:.3f})"])
+
+    table_data.extend([
+        ["Área inferior (Ainf)", f"{area_inferior:.4g}" ],
+        ["Área superior (Asup)", f"{area_superior:.4g}"],
+        ["Índice de daño (I.D)", f"{(area_superior / area_inferior):.4g}"]
+    ])
+
+    # Crear tabla fuera del área del gráfico con bbox
+    table = ax.table(
+    cellText=table_data,
+    colLabels=["Concepto", "Valor"],
+    cellLoc="center",
+    colWidths=[0.3, 0.5],
+    bbox=[0, -0.7, 1, 0.45]  # más abajo y más alto para que no se corte
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.3)
+
+    # Ajustar espacio del gráfico para que no quede muy abajo
+    plt.subplots_adjust(left=0.15, bottom=0.35, top=0.9)
+
+    # Leyenda
+    legend_elements = []
+    if n >= 1:
+        legend_elements.append(
+            Line2D([0], [0], marker='o', color='dimgray', label=f"{data.value[0].masa}kg", linestyle='', markersize=7)
+        )
+    if n >= 2:
+        legend_elements.append(
+            Line2D([0], [0], marker='^', color='red', label=f"{data.value[1].masa}kg", linestyle='', markersize=7)
+        )
+    if n >= 3:
+        legend_elements.append(
+            Line2D([0], [0], marker='s', color='blue', label=f"{data.value[-1].masa}kg", linestyle='', markersize=7)
+        )
+
+    ax.legend(handles=legend_elements, loc='upper left', fontsize=10)
+    fig.tight_layout(rect=[0, 0.1, 1, 0.95])
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_file:
+        plt.savefig(img_file.name, format='png', dpi=300)
+        graph_image_path = img_file.name
+    plt.close(fig)
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, "Índice de daño", ln=True)
+    pdf.image(graph_image_path, x=10, y=20, w=pdf.w - 20)
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_file:
+        pdf.output(pdf_file.name)
+        pdf_file.seek(0)
+        with open(pdf_file.name, "rb") as f:
+            encoded_pdf = base64.b64encode(f.read()).decode('utf-8')
+
+    os.remove(graph_image_path)
+    os.remove(pdf_file.name)
+
+    return {
+        "success": True,
+        "file": encoded_pdf
+    }
