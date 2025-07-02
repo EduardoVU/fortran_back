@@ -131,7 +131,7 @@ def create_plot_section(pdf: FPDF, files: List[str], section_type: str, xlabel: 
                 title_text = "Impacto Desconocido"
             
             plt.figure()
-            plt.plot(data.value[0], data.value[column_index], color=color)
+            plt.plot(data[0], data[column_index], color=color)
             plt.title(f"{title_text}")
             plt.xlabel(xlabel)
             plt.ylabel(ylabel)
