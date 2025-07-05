@@ -7,7 +7,7 @@ from typing import List, Dict
 from collections import defaultdict
 
 
-def create_formulario(files: List[UploadFile]):
+def create_formulario(files: List[UploadFile], target_os: str = "linux"):
     try:
         # Crear carpeta temporal
         temp_dir = tempfile.mkdtemp()
@@ -18,8 +18,8 @@ def create_formulario(files: List[UploadFile]):
         # Agrupar archivos por el número antes del guion bajo
         file_groups = group_files(filenames)
 
-        # Crear y escribir el archivo Fortran (main.f90)
-        main_f90_path = generate_fortran_file(temp_dir, file_groups)
+        # Crear y escribir el archivo Fortran (main.f90) con lógica para OS
+        main_f90_path = generate_fortran_file(temp_dir, file_groups, target_os=target_os)
 
         # Convertir el archivo main.f90 a Base64
         base64_content = encode_file_to_base64(main_f90_path)
@@ -65,57 +65,85 @@ def group_files(filenames: List[str]) -> Dict[str, List[str]]:
     return file_groups
 
 
-def generate_fortran_file(temp_dir: str, file_groups: Dict[str, List[str]]) -> str:
+def generate_fortran_file(temp_dir: str, file_groups: Dict[str, List[str]], target_os: str = "windows") -> str:
     main_f90_path = os.path.join(temp_dir, "main.f90")
+
+    # Definir comandos mkdir según SO
+    def mkdir_command(path: str) -> str:
+        if target_os.lower() == "windows":
+            # En Windows backslash y sin -p (mkdir crea solo una carpeta a la vez)
+            return f"CALL SYSTEM('mkdir {path}')\n"
+        else:
+            # Linux/macOS con -p para crear árbol completo si no existe
+            return f"CALL SYSTEM('mkdir -p {path}')\n"
 
     with open(main_f90_path, "w", encoding="utf-8") as f:
         # Encabezado del archivo Fortran
         f.write("PROGRAM main\n")
         f.write("USE singular\n")
         f.write("IMPLICIT NONE\n\n")
-        f.write("CHARACTER(len=100)::raw_data,cut_rawdata\n")
-        f.write("CHARACTER(len=100)::acc_corregida,vel_nocorregida\n")
-        f.write("CHARACTER(len=100)::vel_corregida,des_nocorregida\n")
-        f.write("CHARACTER(len=100)::des_corregida\n")
+
+        # Variables de archivo
+        f.write("CHARACTER(len=100)::raw_data,cut_rawdata,acc_corregida,vel_nocorregida,vel_corregida,des_nocorregida,des_corregida\n")
         f.write("REAL(KIND=16)::mindes1,mindes2\n\n")
-        
+
         # Declaración de variables para cada grupo
         for group, files in file_groups.items():
-            f.write(f"REAL(KIND=16)::" + ",".join([f"k{group}_{i+1}" for i in range(len(files))]) + "\n")
-        
+            f.write(f"REAL(KIND=16)::" + ",".join([f"k_{group}_{i+1}" for i in range(len(files))]) + "\n")
+
         num_groups = len(file_groups)
         f.write("REAL(KIND=16)::" + ",".join([f"promedio{i}" for i in range(1, num_groups + 1)]) + "\n\n")
-        
+
+        # Crear carpetas raíz y subcarpetas 'plots' y 'memory'
+        f.write("CALL SYSTEM('')  ! Línea dummy para separar\n")
+        for group in file_groups.keys():
+            f.write(mkdir_command(f"{group}"))
+            f.write(mkdir_command(os.path.join(group, "plots")))
+            f.write(mkdir_command(os.path.join(group, "memory")))
+
+        f.write("\n")
+
         # Procesamiento de cada archivo por grupo
         for group, files in file_groups.items():
             for i, filename in enumerate(files):
                 base_name = os.path.splitext(filename)[0]
-                # print("filename")
-                # print(filename)
-                f.write(f'raw_data = "{filename}"\n')
-                f.write(f'cut_rawdata = "{base_name}_cut.txt"\n')
-                f.write(f'acc_corregida = "{base_name}_acccor.txt"\n')
-                f.write(f'vel_nocorregida = "{base_name}_velsin.txt"\n')
-                f.write(f'vel_corregida = "{base_name}_velcor.txt"\n')
-                f.write(f'des_nocorregida = "{base_name}_dessin.txt"\n')
-                f.write(f'des_corregida = "{base_name}_descor.txt"\n\n')
-                
+
+                # Archivos que van a plots
+                acccor_file = os.path.join(group, "plots", f"{base_name}_acccor.txt")
+                descor_file = os.path.join(group, "plots", f"{base_name}_descor.txt")
+                velcor_file = os.path.join(group, "plots", f"{base_name}_velcor.txt")
+
+                # Archivos que van a memory
+                cut_file = os.path.join(group, "memory", f"{base_name}_cut.txt")
+                velsin_file = os.path.join(group, "memory", f"{base_name}_velsin.txt")
+                dessin_file = os.path.join(group, "memory", f"{base_name}_dessin.txt")
+
+                # raw_data está en nivel raíz (sin carpeta)
+                raw_file = filename
+
+                f.write(f'raw_data = "{raw_file}"\n')
+                f.write(f'cut_rawdata = "{cut_file}"\n')
+                f.write(f'acc_corregida = "{acccor_file}"\n')
+                f.write(f'vel_nocorregida = "{velsin_file}"\n')
+                f.write(f'vel_corregida = "{velcor_file}"\n')
+                f.write(f'des_nocorregida = "{dessin_file}"\n')
+                f.write(f'des_corregida = "{descor_file}"\n\n')
+
                 f.write("CALL process(raw_data, cut_rawdata, acc_corregida, vel_nocorregida, ")
                 f.write("vel_corregida, des_nocorregida, des_corregida, mindes2)\n")
-                f.write(f'k{group}_{i+1} = mindes2\n\n')
-            
+                f.write(f'k_{group}_{i+1} = mindes2\n\n')
+
             # Cálculo del promedio por grupo
-            promedio_vars = "+".join([f"k{group}_{i+1}" for i in range(len(files))])
+            promedio_vars = "+".join([f"k_{group}_{i+1}" for i in range(len(files))])
             f.write(f"promedio{list(file_groups.keys()).index(group) + 1} = ({promedio_vars})/{len(files)}\n\n")
-        
+
         # Mostrar los desplazamientos promedio
         f.write("\n! Mostrar los desplazamientos promedio\n")
         for i, group in enumerate(file_groups.keys(), 1):
             f.write(f'WRITE(*,*)"El desplazamiento promedio para archivos con {group} es : ",promedio{i}\n')
-        
+
         f.write("\nEND PROGRAM main\n")
 
-    # print(f"Archivo main.f90 creado en: {main_f90_path}")
     return main_f90_path
 
 
