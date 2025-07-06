@@ -1,20 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+# from fastapi.staticfiles import StaticFiles
+# from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.routing import APIRouter
 import importlib
 import os
 
 app = FastAPI()
-
-# Sirve archivos estáticos desde la carpeta dist (frontend build)
-app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
-
-# Endpoint raíz para devolver index.html
-@app.get("/", response_class=HTMLResponse)
-async def serve_frontend():
-    return FileResponse("dist/index.html")
 
 # Configuración de CORS
 app.add_middleware(
